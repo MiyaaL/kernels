@@ -1,19 +1,19 @@
-# kernels��CuTe C++ kernel ��ϰ�ֿ�
+# kernels：CuTe C++ kernel 练习仓库
 
-����ֿ�ֻ�� kernel ʵ���� benchmark��������ϰ���ӹ��ù̶��ӿ� `run(a, b, out)`������� benchmark Ԥ�ȷ��䣬��ʱ��Χ�ڲ�����������
+这个仓库只放 kernel 实现与 benchmark。两个练习算子共用固定接口 `run(a, b, out)`：输出由 benchmark 预先分配，计时范围内不分配张量。
 
 ```text
 kernels/
   5090/
     baseline/
-      elementwise_add.py # torch.add��FP32
-      gemm_bf16.py       # torch.mm��BF16
+      elementwise_add.py # torch.add，FP32
+      gemm_bf16.py       # torch.mm，BF16
     cute/
-      elementwise_add.cu # �����е� CuTe Layout/Tensor ����ʵ��
-      gemm_bf16.cu       # �����еı��� CuTe GEMM��FP32 �ۼ�
-      bindings.cpp       # PyTorch ��չ��ڡ�����Լ���뵱ǰ CUDA stream
+      elementwise_add.cu # 可运行的 CuTe Layout/Tensor 入门实现
+      gemm_bf16.cu       # 可运行的标量 CuTe GEMM，FP32 累加
+      bindings.cpp       # PyTorch 扩展入口、输入约束与当前 CUDA stream
       launchers.h
-      ops.py             # Python ���ð�װ
+      ops.py             # Python 调用包装
 benchmarks/
   bench_elementwise.py
   bench_gemm.py
@@ -21,11 +21,11 @@ benchmarks/
 setup.py
 ```
 
-�豸 kernel ʹ�� `.cu`����Ϊ PyTorch ��չ�ύ�� `nvcc` ���룻`.cpp` ����������󶨡�`gemm_bf16.cu` ��**��ȷ���� CuTe �����ο����**��ÿ���̼߳���һ�����Ԫ�أ�δʹ�ù����ڴ�� Tensor Core������Ԥ��Զ���� `torch.mm`���������ͬһ�ļ����𲽸ĳɷֿ顢�����ڴ渴�á�MMA ����ˮ�߰汾������ BF16 ���������FP32 �ۼӡ����������� M/N/K �ı߽紦����Benchmark ��ȽϽ���ͺ�ʱ��
+设备 kernel 使用 `.cu`，因为 PyTorch 扩展会交给 `nvcc` 编译；`.cpp` 负责主机侧绑定。`gemm_bf16.cu` 是**正确性与 CuTe 索引参考起点**，每个线程计算一个输出元素，未使用共享内存或 Tensor Core，性能预计远低于 `torch.mm`。你可以在同一文件里逐步改成分块、共享内存复用、MMA 和流水线版本。保持 BF16 输入输出、FP32 累加、任意正整数 M/N/K 的边界处理。Benchmark 会比较结果和耗时。
 
-## �����ͱ���
+## 环境和编译
 
-�ڸû����ϸ������е� `harrix` conda ������CUDA Toolkit �� CUTLASS ͷ�ļ���
+在该机器上复用已有的 `harrix` conda 环境、CUDA Toolkit 与 CUTLASS 头文件：
 
 ```bash
 conda activate harrix
@@ -35,7 +35,7 @@ export CUTLASS_ROOT=/home/miyaa/work/src/xcompute/third/cutlass
 MAX_JOBS=2 python setup.py build_ext --inplace
 ```
 
-ֻ�� torch baseline ʱ���ñ�����չ��
+只跑 torch baseline 时不用编译扩展。
 
 ## Benchmark
 
@@ -46,12 +46,12 @@ python -m benchmarks.bench_gemm --m 256 --n 256 --k 512 --impl torch
 python -m benchmarks.bench_gemm --m 256 --n 256 --k 512 --impl all --mode graph
 ```
 
-`--kernel-device` Ĭ��ѡ�� `kernels/5090/`��`--device` ѡ�� CUDA �豸���� `cuda:0`�����Ժ������豸ʱ���� `kernels/<�豸��>/{baseline,cute}/` ��ʵ�֣��� `KERNEL_DEVICE=<�豸��> python setup.py build_ext --inplace` ���������� benchmark �� `--kernel-device <�豸��>`��`--impl` ��ѡ `torch`��`cute`��`all`��`--mode` ��ѡ `eager`��`graph`��CUDA Graph ģʽ�ظ�ִ��Ԥ�Ȳ���ĵ��ã����ڼ��ٶ� kernel �����е����������϶������ eager ģʽ������Ӧ�ֿ��Ƚϡ���������ӳ��Լ� elementwise ��������Ч GB/s��GEMM �� TFLOP/s��`--no-check` ����������ʱǰ�Ľ���Ƚϣ�����ʱ���鱣��Ĭ��У�顣GEMM Ĭ���� `atol=0.1, rtol=0.02` �Ƚ� BF16 �������Ϊ��ͬ FP32 �ۼ�˳��������뵽���� BF16 ֵ������ `--atol`��`--rtol` ���ǡ�ʹ�� `--help` �鿴Ԥ�ȡ��ظ������Ȳ�����
+`--kernel-device` 默认选择 `kernels/5090/`，`--device` 选择 CUDA 设备（如 `cuda:0`）。以后新增设备时，按 `kernels/<设备名>/{baseline,cute}/` 放实现，用 `KERNEL_DEVICE=<设备名> python setup.py build_ext --inplace` 构建，并给 benchmark 加 `--kernel-device <设备名>`。`--impl` 可选 `torch`、`cute`、`all`；`--mode` 可选 `eager`、`graph`。CUDA Graph 模式重复执行预先捕获的调用，用于减少短 kernel 测量中的主机发射间隙；它与 eager 模式的数字应分开比较。输出包括延迟以及 elementwise 的名义有效 GB/s、GEMM 的 TFLOP/s。`--no-check` 可以跳过计时前的结果比较，调试时建议保留默认校验。GEMM 默认用 `atol=0.1, rtol=0.02` 比较 BF16 输出，因为不同 FP32 累加顺序可能舍入到相邻 BF16 值；可用 `--atol`、`--rtol` 覆盖。使用 `--help` 查看预热、重复次数等参数。
 
-## ������ϰ˳��
+## 建议练习顺序
 
-1. �� elementwise add �ı��߳̿��С��ÿ�߳�Ԫ�������� 1K��1M��64M Ԫ�أ���������������������졣
-2. �� GEMM �̶�����ά�ȡ��ֱ�ɨ�� M��N��K��������� tile���ټ��빲���ڴ�ֿ��븴�á�
-3. ÿ��ֻ��һ�����Ȼ����������أ���¼ shape��Ԥ��ƿ������ȷ�ԡ��ӳٺ���Դռ�á�ֻ�й۲쵽��Ӧƿ��ʱ���ٳ��� Split-K��persistent ���첽��ˮ�ߡ�
+1. 对 elementwise add 改变线程块大小和每线程元素数，测 1K、1M、64M 元素，解释启动开销与带宽差异。
+2. 对 GEMM 固定两个维度、分别扫描 M、N、K。先数输出 tile，再加入共享内存分块与复用。
+3. 每次只改一个调度或数据流因素；记录 shape、预计瓶颈、正确性、延迟和资源占用。只有观察到对应瓶颈时，再尝试 Split-K、persistent 或异步流水线。
 
-CuTe API ���ſɶ��� [CuTe Tensor �̳�](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/cute/03_tensor.html) �� [GEMM �̳�](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/cute/0x_gemm_tutorial.html)��
+CuTe API 入门可对照 [CuTe Tensor 教程](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/cute/03_tensor.html) 与 [GEMM 教程](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/cute/0x_gemm_tutorial.html)。
